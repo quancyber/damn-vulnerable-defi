@@ -1,4 +1,10 @@
-import "../side-entrance/SideEntranceLenderPool.sol";
+pragma solidity ^0.8.0;
+
+import "solmate/src/auth/Owned.sol";
+import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
+import {SideEntranceLenderPool} from "../side-entrance/SideEntranceLenderPool.sol";
+import "hardhat/console.sol";
+
 
 contract AttackSideEntrance {
     SideEntranceLenderPool pool;
